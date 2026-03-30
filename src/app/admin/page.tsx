@@ -1,8 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
 import { approveDriver, toggleSuspendUser, updateUserRecord, deleteUserAction } from './actions'
-import { Activity, Settings, Save, Ban, Trash2, CheckCircle } from 'lucide-react'
+import { Activity, Settings, Save, Ban, Trash2, CheckCircle, BarChart3, Coins, TrendingUp, AlertTriangle, LogOut } from 'lucide-react'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { revalidatePath } from 'next/cache'
 
 export default async function AdminPage(props: { searchParams: Promise<{ view?: string }> }) {
   const searchParams = await props.searchParams;
@@ -16,13 +17,30 @@ export default async function AdminPage(props: { searchParams: Promise<{ view?: 
 
   const { data: allUsers } = await supabase.from('users').select('*').order('created_at', { ascending: false })
   const { data: pendingDrivers } = await supabase.from('drivers').select('*, users ( name, email, phone )').eq('verified', false)
+  const { data: allRides } = await supabase.from('rides').select('*')
+  const { data: allWallets } = await supabase.from('wallets').select('balance')
+
+  // Analytics Logic
+  const rides24h = allRides || [];
+  const completed24h = rides24h.filter(r => r.status === 'completed').length;
+  const ongoing24h = rides24h.filter(r => r.status === 'in-progress' || r.status === 'booked').length;
+  const collectedRevenue = (allRides?.filter(r => r.traveler_paid && r.driver_paid).length || 0) * 200;
+  const pendingRevenue = (allRides?.filter(r => !r.traveler_paid || !r.driver_paid).length || 0) * 200;
+  
+  async function handleLogout() {
+    'use server'
+    const supabase = await createClient()
+    await supabase.auth.signOut()
+    redirect('/login')
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 p-8 text-[#023047]">
-      <header className="flex justify-between bg-[#023047] p-6 rounded-2xl text-white mb-8">
+      <header className="flex justify-between bg-[#023047] p-6 rounded-2xl text-white mb-8 shadow-lg">
         <h1 className="text-2xl font-bold flex items-center gap-3"><Activity /> Central Command</h1>
         <div className="flex gap-4">
-          <Link href="/admin/config" className="bg-[#fb8500] px-4 py-2 rounded-lg font-bold">API Config</Link>
+            <Link href="/admin/config" className="bg-[#fb8500] px-4 py-2 rounded-lg font-bold">API Config</Link>
+            <form action={handleLogout}><button type="submit" className="bg-red-500 px-4 py-2 rounded-lg font-bold flex items-center gap-2"><LogOut size={16}/> Logout</button></form>
         </div>
       </header>
 
@@ -32,16 +50,16 @@ export default async function AdminPage(props: { searchParams: Promise<{ view?: 
             <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><CheckCircle/> KYC Approval Queue</h2>
             {pendingDrivers?.length === 0 ? <p className="text-slate-500">No pending verifications.</p> : pendingDrivers?.map(d => (
               <div key={d.user_id} className="flex justify-between items-center border-b p-4">
-                <span className="font-semibold">{d.users.name}</span>
-                <form action={async () => { 'use server'; await approveDriver(d.user_id) }}>
-                  <button className="bg-[#fb8500] text-white px-4 py-2 rounded-lg font-bold">Approve</button>
-                </form>
+                <span className="font-semibold">{d.users?.name || 'Unknown'}</span>
+                <form action={async () => { 'use server'; await approveDriver(d.user_id) }}><button className="bg-[#fb8500] text-white px-4 py-2 rounded-lg font-bold">Approve</button></form>
               </div>
             ))}
           </div>
-          <Link href="?view=users" className="block bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h3 className="text-xl font-bold">User Directory →</h3>
-          </Link>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Link href="?view=rides" className="bg-white p-6 rounded-2xl shadow-sm border">Rides Data →</Link>
+            <Link href="?view=users" className="bg-white p-6 rounded-2xl shadow-sm border">User Directory →</Link>
+          </div>
         </div>
       )}
 
@@ -60,7 +78,6 @@ export default async function AdminPage(props: { searchParams: Promise<{ view?: 
                         <option value="admin">Admin</option><option value="super_admin">Super Admin</option>
                     </select>
                 </form>
-                
                 <div className="flex gap-2">
                     <button formAction={updateUserRecord} className="bg-blue-100 p-2 rounded"><Save className="w-5 h-5"/></button>
                     <button onClick={async () => { 'use server'; await toggleSuspendUser(u.id, u.account_status || 'active') }} className="bg-orange-100 p-2 rounded"><Ban className="w-5 h-5"/></button>
