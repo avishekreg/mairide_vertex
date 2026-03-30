@@ -1,8 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
-import { approveDriver, toggleSuspendUser, updateUserRecord } from './actions'
-import { Activity, Settings, Save, Ban, TrendingUp, AlertTriangle, CheckCircle, BarChart3, Coins, Trash2, LogOut } from 'lucide-react'
+import { approveDriver, toggleSuspendUser, updateUserRecord, deleteUserAction } from './actions'
+import { Activity, Settings, Save, Ban, Trash2, CheckCircle } from 'lucide-react'
 import { redirect } from 'next/navigation'
-import { revalidatePath } from 'next/cache'
 import Link from 'next/link'
 
 export default async function AdminPage(props: { searchParams: Promise<{ view?: string }> }) {
@@ -11,212 +10,67 @@ export default async function AdminPage(props: { searchParams: Promise<{ view?: 
   const supabase = await createClient()
   
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return <div>Access Denied.</div>
+  if (!user) return <div>Access Denied</div>
   const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single()
   if (profile?.user_type !== 'admin' && profile?.user_type !== 'super_admin') redirect('/')
 
-  // Fetch Data
   const { data: allUsers } = await supabase.from('users').select('*').order('created_at', { ascending: false })
   const { data: pendingDrivers } = await supabase.from('drivers').select('*, users ( name, email, phone )').eq('verified', false)
-  const { data: allRides } = await supabase.from('rides').select('*')
-  const { data: allWallets } = await supabase.from('wallets').select('balance')
-
-  // --- TIME ALGORITHMS ---
-  const now = new Date();
-  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const rides24h = allRides?.filter(r => r.created_at >= twentyFourHoursAgo) || [];
-  const completed24h = rides24h.filter(r => r.status === 'completed').length;
-  const ongoing24h = rides24h.filter(r => r.status === 'in-progress' || r.status === 'booked').length;
-  
-  // Revenue Funnel Logic
-  const maintenanceFee = 100; 
-  const paidRides = allRides?.filter(r => r.traveler_paid && r.driver_paid).length || 0;
-  const collectedRevenue = paidRides * (maintenanceFee * 2);
-  const funnelRides = allRides?.filter(r => (!r.traveler_paid || !r.driver_paid) && r.status !== 'cancelled').length || 0;
-  const pendingRevenue = funnelRides * (maintenanceFee * 2);
-
-  const totalMaicoinsInCirculation = allWallets?.reduce((sum, wallet) => sum + Number(wallet.balance), 0) || 0;
-  const isNegativeCashflow = totalMaicoinsInCirculation > collectedRevenue;
-
-  const totalDaysActive = Math.max(1, (now.getTime() - new Date(allRides?.[0]?.created_at || now).getTime()) / (1000 * 3600 * 24));
-  const avgRidesPerDay = (allRides?.length || 0) / totalDaysActive;
-  const projectedRidesNext24h = Math.ceil(avgRidesPerDay * 1.15); 
-  const projectedRevenueNext24h = projectedRidesNext24h * 200;
-
-  // Server Actions
-  async function deleteUserAction(formData: FormData) {
-    'use server'
-    const supabase = await createClient()
-    const userId = formData.get('user_id') as string
-    await supabase.from('drivers').delete().eq('user_id', userId)
-    await supabase.from('users').delete().eq('id', userId)
-    revalidatePath('/admin')
-  }
-
-  async function handleLogout() {
-    'use server'
-    const supabase = await createClient()
-    await supabase.auth.signOut()
-    redirect('/login')
-  }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 text-[#023047] font-sans pb-20">
-      <div className="max-w-7xl mx-auto space-y-8">
-        
-        {/* HEADER */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#023047] p-6 rounded-2xl shadow-lg text-white">
-          <div>
-            <h1 className="text-3xl font-extrabold flex items-center gap-3">
-              <Activity className="w-8 h-8 text-[#ffb703]" /> Central Command
-            </h1>
-            <p className="text-[#8ecae6] mt-1">Platform Analytics & Intelligence</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link href="/admin/config" className="bg-[#fb8500] hover:bg-[#ffb703] text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition">
-              <Settings className="w-4 h-4"/> API Config
-            </Link>
-            <form action={handleLogout}>
-              <button type="submit" className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition">
-                <LogOut className="w-4 h-4"/> Log Out
-              </button>
-            </form>
-          </div>
-        </header>
+    <div className="min-h-screen bg-slate-50 p-8 text-[#023047]">
+      <header className="flex justify-between bg-[#023047] p-6 rounded-2xl text-white mb-8">
+        <h1 className="text-2xl font-bold flex items-center gap-3"><Activity /> Central Command</h1>
+        <div className="flex gap-4">
+          <Link href="/admin/config" className="bg-[#fb8500] px-4 py-2 rounded-lg font-bold">API Config</Link>
+        </div>
+      </header>
 
-        {view === 'dashboard' && (
-          <div className="space-y-8">
-            
-            {isNegativeCashflow && (
-              <div className="bg-red-100 border-l-8 border-red-600 p-6 rounded-xl flex items-start gap-4">
-                <AlertTriangle className="w-8 h-8 text-red-600 flex-shrink-0" />
-                <div>
-                  <h3 className="text-xl font-extrabold text-red-800">CRITICAL: Negative Cashflow Risk Detected</h3>
-                  <p className="text-red-700 font-medium mt-1">
-                    There are currently <strong>{totalMaicoinsInCirculation} Maicoins</strong> in circulation, which exceeds the actual collected revenue of <strong>₹{collectedRevenue}</strong>. If all users redeem points today, the platform will operate at a loss.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm border-l-8 border-l-[#fb8500]">
-              <h2 className="text-xl font-bold text-[#023047] mb-6 flex items-center gap-2"><CheckCircle className="text-[#fb8500]"/> KYC Approval Queue</h2>
-              {pendingDrivers?.length === 0 ? <p className="italic text-slate-500">No pending verifications at this time.</p> : pendingDrivers?.map(d => (
-                <div key={d.user_id} className="flex justify-between items-center border-b p-4 bg-orange-50/50 rounded-lg mb-2">
-                  <span className="font-semibold">{d.users.name}</span>
-                  <form action={async () => { 'use server'; await approveDriver(d.user_id) }}>
-                    <button className="bg-[#fb8500] text-white px-4 py-2 rounded-lg font-bold hover:bg-[#ffb703] transition">Approve Documents</button>
-                  </form>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
-                <h2 className="text-xl font-bold text-[#023047] mb-6 flex items-center gap-2"><BarChart3 className="text-blue-500"/> Live 24H Ride Status</h2>
-                <div className="flex items-end gap-8 h-32 mt-4 border-b border-slate-200 pb-2 relative">
-                  <div className="w-1/2 flex flex-col items-center group">
-                    <span className="text-2xl font-black text-emerald-500 mb-2">{completed24h}</span>
-                    <div className="w-full bg-emerald-400 rounded-t-md transition-all duration-500" style={{ height: `${Math.max(10, (completed24h / Math.max(1, rides24h.length)) * 100)}%` }}></div>
-                    <span className="text-sm font-bold text-slate-500 mt-2">Completed</span>
-                  </div>
-                  <div className="w-1/2 flex flex-col items-center">
-                    <span className="text-2xl font-black text-amber-500 mb-2">{ongoing24h}</span>
-                    <div className="w-full bg-amber-400 rounded-t-md transition-all duration-500" style={{ height: `${Math.max(10, (ongoing24h / Math.max(1, rides24h.length)) * 100)}%` }}></div>
-                    <span className="text-sm font-bold text-slate-500 mt-2">On-going</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
-                <h2 className="text-xl font-bold text-[#023047] mb-6 flex items-center gap-2"><Coins className="text-green-500"/> Revenue Funnel</h2>
-                <div className="flex items-end gap-8 h-32 mt-4 border-b border-slate-200 pb-2 relative">
-                  <div className="w-1/2 flex flex-col items-center">
-                    <span className="text-2xl font-black text-blue-600 mb-2">₹{collectedRevenue}</span>
-                    <div className="w-full bg-blue-500 rounded-t-md transition-all duration-500" style={{ height: `${Math.max(10, (collectedRevenue / Math.max(1, collectedRevenue + pendingRevenue)) * 100)}%` }}></div>
-                    <span className="text-sm font-bold text-slate-500 mt-2">Collected</span>
-                  </div>
-                  <div className="w-1/2 flex flex-col items-center">
-                    <span className="text-2xl font-black text-purple-500 mb-2">₹{pendingRevenue}</span>
-                    <div className="w-full bg-purple-400 rounded-t-md transition-all duration-500" style={{ height: `${Math.max(10, (pendingRevenue / Math.max(1, collectedRevenue + pendingRevenue)) * 100)}%` }}></div>
-                    <span className="text-sm font-bold text-slate-500 mt-2">In Funnel</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-r from-[#023047] to-[#219ebc] p-8 rounded-2xl shadow-lg text-white">
-              <h2 className="text-xl font-bold flex items-center gap-2 mb-6"><TrendingUp className="text-[#ffb703]"/> AI Projections (Next 24 Hours)</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-white/10 p-6 rounded-xl border border-white/20 backdrop-blur-sm">
-                  <p className="text-blue-100 font-medium">Projected Rides</p>
-                  <h3 className="text-4xl font-black text-white mt-2">{projectedRidesNext24h}</h3>
-                </div>
-                <div className="bg-white/10 p-6 rounded-xl border border-white/20 backdrop-blur-sm">
-                  <p className="text-blue-100 font-medium">Projected Revenue</p>
-                  <h3 className="text-4xl font-black text-[#ffb703] mt-2">₹{projectedRevenueNext24h}</h3>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Link href="?view=rides" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-[#219ebc] transition block">
-                <h3 className="text-xl font-bold text-[#023047]">Manage All Rides →</h3>
-              </Link>
-              <Link href="?view=users" className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-[#219ebc] transition block">
-                <h3 className="text-xl font-bold text-[#023047]">User Directory →</h3>
-              </Link>
-            </div>
-          </div>
-        )}
-
-        {view === 'rides' && (
-          <div className="bg-white p-8 rounded-2xl border border-slate-200">
-            <Link href="?" className="text-[#fb8500] font-bold mb-6 block hover:underline">← Back to Dashboard</Link>
-            <h2 className="text-2xl font-bold text-[#023047] mb-6">All Platform Rides</h2>
-            <div className="space-y-4">
-              {allRides?.length === 0 ? <p className="text-slate-500 italic">No rides have been booked yet.</p> : allRides?.map(r => (
-                <div key={r.id} className="p-4 border rounded-xl shadow-sm flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-slate-50">
-                  <div>
-                    <p className="font-bold text-[#023047]">Ride ID: {r.id.split('-')[0]}</p>
-                    <p className="text-sm text-slate-500 mt-1">Status: <span className="uppercase font-bold text-[#fb8500]">{r.status}</span></p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {view === 'users' && (
-          <div className="bg-white p-8 rounded-2xl border border-slate-200">
-            <Link href="?" className="text-[#fb8500] font-bold mb-6 block hover:underline">← Back to Dashboard</Link>
-            <h2 className="text-2xl font-bold text-[#023047] mb-6">User Directory</h2>
-            <div className="w-full flex flex-col border border-slate-200 rounded-xl overflow-hidden">
-              <div className="grid grid-cols-1 md:grid-cols-4 bg-[#219ebc] text-white p-4 font-bold">
-                <div>Name</div><div>Email</div><div>Role</div><div>Actions</div>
-              </div>
-              {allUsers?.map(u => (
-                <form action={updateUserRecord} key={u.id} className="grid grid-cols-1 md:grid-cols-4 p-4 border-b items-center gap-4 hover:bg-slate-50 transition">
-                  <input type="hidden" name="user_id" value={u.id} />
-                  <div><input name="name" defaultValue={u.name} className="border border-slate-300 focus:border-blue-500 outline-none p-2 rounded-lg w-full bg-white transition" /></div>
-                  <div className="text-sm truncate text-slate-600 font-medium">{u.email}</div>
-                  <div>
-                    <select name="role" defaultValue={u.user_type} className="border border-slate-300 focus:border-blue-500 outline-none p-2 rounded-lg bg-white w-full max-w-[160px] transition">
-                      <option value="traveler">Traveler</option><option value="driver">Driver</option><option value="admin">Admin</option><option value="super_admin">Super Admin</option>
-                    </select>
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="submit" title="Save" className="bg-[#8ecae6] text-[#023047] p-2 rounded-lg font-bold"><Save className="w-5 h-5"/></button>
-                    <button formAction={toggleSuspendUser.bind(null, u.id, u.account_status || 'active')} title="Suspend" className="bg-[#fb8500] text-white p-2 rounded-lg font-bold"><Ban className="w-5 h-5"/></button>
-                    <button formAction={deleteUserAction} title="Delete" className="bg-red-500 text-white p-2 rounded-lg font-bold"><Trash2 className="w-5 h-5"/></button>
-                  </div>
+      {view === 'dashboard' && (
+        <div className="space-y-8">
+          <div className="bg-white p-6 rounded-2xl border-l-8 border-l-[#fb8500] shadow-sm">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><CheckCircle/> KYC Approval Queue</h2>
+            {pendingDrivers?.length === 0 ? <p className="text-slate-500">No pending verifications.</p> : pendingDrivers?.map(d => (
+              <div key={d.user_id} className="flex justify-between items-center border-b p-4">
+                <span className="font-semibold">{d.users.name}</span>
+                <form action={async () => { 'use server'; await approveDriver(d.user_id) }}>
+                  <button className="bg-[#fb8500] text-white px-4 py-2 rounded-lg font-bold">Approve</button>
                 </form>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
-        )}
+          <Link href="?view=users" className="block bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h3 className="text-xl font-bold">User Directory →</h3>
+          </Link>
+        </div>
+      )}
 
-      </div>
+      {view === 'users' && (
+        <div className="bg-white p-8 rounded-2xl shadow-sm">
+          <Link href="?" className="text-[#fb8500] font-bold mb-6 block">← Back to Dashboard</Link>
+          <div className="space-y-4">
+            {allUsers?.map(u => (
+              <div key={u.id} className="grid grid-cols-4 items-center gap-4 border-b pb-4">
+                <form action={updateUserRecord} className="col-span-3 grid grid-cols-3 gap-4">
+                    <input type="hidden" name="user_id" value={u.id} />
+                    <input name="name" defaultValue={u.name} className="border p-2 rounded" />
+                    <span className="text-slate-500">{u.email}</span>
+                    <select name="role" defaultValue={u.user_type} className="border p-2 rounded">
+                        <option value="traveler">Traveler</option><option value="driver">Driver</option>
+                        <option value="admin">Admin</option><option value="super_admin">Super Admin</option>
+                    </select>
+                </form>
+                
+                <div className="flex gap-2">
+                    <button formAction={updateUserRecord} className="bg-blue-100 p-2 rounded"><Save className="w-5 h-5"/></button>
+                    <button onClick={async () => { 'use server'; await toggleSuspendUser(u.id, u.account_status || 'active') }} className="bg-orange-100 p-2 rounded"><Ban className="w-5 h-5"/></button>
+                    <button onClick={async () => { 'use server'; await deleteUserAction(u.id) }} className="bg-red-100 p-2 rounded"><Trash2 className="w-5 h-5"/></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
