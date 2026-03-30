@@ -8,13 +8,29 @@ export async function login(formData: FormData) {
   const email = formData.get('email') as string
   const password = formData.get('password') as string
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  // 1. Authenticate the user
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) {
     redirect('/login?message=Incorrect email or password')
   }
 
-  redirect('/') // Redirects to home page after login
+  // 2. Smart Routing: Check their role in the database
+  if (data?.user) {
+    const { data: profile } = await supabase
+      .from('users')
+      .select('user_type')
+      .eq('id', data.user.id)
+      .single()
+
+    // If they are staff, send straight to the Command Center
+    if (profile?.user_type === 'admin' || profile?.user_type === 'super_admin') {
+      redirect('/admin')
+    }
+  }
+
+  // 3. Normal users go straight to the app dashboard
+  redirect('/dashboard') 
 }
 
 export async function signup(formData: FormData) {
@@ -26,7 +42,7 @@ export async function signup(formData: FormData) {
   const phone = formData.get('phone') as string
   const user_type = formData.get('user_type') as string
 
-  console.log("Attempting to sign up:", { email, name, phone, user_type }) // <-- Debugging line
+  console.log("Attempting to sign up:", { email, name, phone, user_type }) 
 
   // 1. Create the user in Supabase Auth
   const { data, error } = await supabase.auth.signUp({
@@ -35,7 +51,7 @@ export async function signup(formData: FormData) {
   })
 
   if (error) {
-    console.error("SUPABASE AUTH ERROR:", error.message) // <-- Debugging line
+    console.error("SUPABASE AUTH ERROR:", error.message) 
     redirect(`/login?message=${error.message}`)
   }
 
@@ -50,10 +66,11 @@ export async function signup(formData: FormData) {
     })
 
     if (dbError) {
-      console.error("DATABASE INSERT ERROR:", dbError.message) // <-- Debugging line
+      console.error("DATABASE INSERT ERROR:", dbError.message) 
       redirect(`/login?message=Could not save user profile`)
     }
   }
 
-  redirect('/') // Redirects to home page after signup
+  // 3. New signups (Travelers/Drivers) go straight to the app dashboard
+  redirect('/dashboard') 
 }
